@@ -46,7 +46,7 @@ df['health_score'] = ((1 - df['failure_prob']) * 100).round(1)
 
 # 5. Connect via Supabase REST API & Bulk Upload All 10,000 Records
 SUPABASE_URL = "https://jdkduznbbwdcftyuqvod.supabase.co"
-supabase_key = os.getenv("SUPABASE_KEY", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 print("3. Connecting to Supabase API...")
 

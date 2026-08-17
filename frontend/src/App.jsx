@@ -4,7 +4,8 @@ import { supabase } from './supabaseClient';
 import {
   LayoutDashboard, Server, BarChart3, Settings, LogOut, RefreshCw,
   Plus, Search, Eye, Edit, Trash2, X, Lock, Mail, Cpu, Save,
-  User, Shield, Calendar, Key, Clock, Filter
+  User, Shield, Calendar, Key, Clock, Filter, Activity, Gauge,
+  Thermometer, Zap, AlertTriangle, CheckCircle2, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -22,24 +23,88 @@ const initialFormState = {
   id: '', name: '', type: 'Class M', location: 'Plant A', status: 'HEALTHY', health_score: 100
 };
 
+const inputContainerStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  backgroundColor: '#0f172a',
+  border: '1px solid #334155',
+  borderRadius: '6px',
+  padding: '0.6rem 0.8rem'
+};
+
+const rawInputStyle = {
+  background: 'none',
+  border: 'none',
+  color: '#f8fafc',
+  width: '100%',
+  outline: 'none',
+  fontSize: '0.9rem'
+};
+
+const labelStyle = {
+  display: 'block',
+  fontSize: '0.8rem',
+  fontWeight: '600',
+  color: '#94a3b8',
+  marginBottom: '6px'
+};
+
+const submitBtnStyle = {
+  backgroundColor: '#2563eb',
+  color: '#ffffff',
+  padding: '0.75rem 1rem',
+  borderRadius: '6px',
+  border: 'none',
+  fontWeight: '600',
+  cursor: 'pointer',
+  fontSize: '0.9rem',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '8px'
+};
+
+function Card({ title, value, sub, color }) {
+  return (
+    <div style={{ backgroundColor: '#131b2e', padding: '1.2rem', borderRadius: '10px', border: '1px solid #1e293b', borderLeft: `4px solid ${color}` }}>
+      <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: '600' }}>{title}</div>
+      <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#f8fafc', margin: '4px 0' }}>{value}</div>
+      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{sub}</div>
+    </div>
+  );
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
-  
-  // Auth Inputs
+
+  // Auth State
   const [emailInput, setEmailInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [fullNameInput, setFullNameInput] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [authMsg, setAuthMsg] = useState('');
 
-  // Dashboard States
-  const [activeTab, setActiveTab] = useState('Dashboard');
+  // App Navigation & Data
+  const [activeTab, setActiveTab] = useState('Machines');
   const [machines, setMachines] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Company Settings State
+  // Telemetry Inputs
+  const [productType, setProductType] = useState('L');
+  const [airTemp, setAirTemp] = useState(300.0);
+  const [processTemp, setProcessTemp] = useState(310.0);
+  const [rotationalSpeed, setRotationalSpeed] = useState(1500);
+  const [torque, setTorque] = useState(40.0);
+  const [toolWear, setToolWear] = useState(120);
+  const [telemetryResult, setTelemetryResult] = useState(null);
+
+  // Profile & Settings Management
+  const [profileName, setProfileName] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [companySettings, setCompanySettings] = useState({
     companyName: 'Industrial Solutions Corp.',
     facilityLocation: 'Plant A - Main Division',
@@ -47,30 +112,35 @@ export default function App() {
     emailAlerts: true,
     criticalNotifications: true,
   });
-  const [settingsSavedMessage, setSettingsSavedMessage] = useState('');
+  const [settingsMsg, setSettingsMsg] = useState('');
 
-  // Modal States
+  // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedMachine, setSelectedMachine] = useState(null);
-
   const [formData, setFormData] = useState(initialFormState);
 
-  // --- 1. AUTH SESSION MANAGEMENT ---
+  // AUTH SESSION TRACKING
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      if (session?.user) {
+        setProfileName(session.user.user_metadata?.full_name || '');
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session?.user) {
+        setProfileName(session.user.user_metadata?.full_name || '');
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // --- 2. DATABASE CRUD OPERATIONS ---
+  // FETCH MACHINES FROM DATABASE
   const fetchMachines = async () => {
     setIsLoading(true);
     const { data, error } = await supabase
@@ -95,6 +165,7 @@ export default function App() {
   const handleAuth = async (e) => {
     e.preventDefault();
     setAuthError('');
+    setAuthMsg('');
     let result;
 
     if (isSignUp) {
@@ -104,10 +175,14 @@ export default function App() {
         options: {
           data: {
             full_name: fullNameInput || emailInput.split('@')[0],
-            role: 'OPERATOR', // New signups default to OPERATOR
+            role: 'OPERATOR',
           }
         }
       });
+      if (!result.error) {
+        setAuthMsg('Account created successfully! You may now log in.');
+        setIsSignUp(false);
+      }
     } else {
       result = await supabase.auth.signInWithPassword({
         email: emailInput,
@@ -115,7 +190,7 @@ export default function App() {
       });
     }
 
-    if (result.error) {
+    if (result?.error) {
       setAuthError(result.error.message);
     }
   };
@@ -124,12 +199,43 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
+  // PROFILE & SECURITY UPDATES
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    setSettingsMsg('');
+    const updates = {
+      data: { full_name: profileName }
+    };
+
+    const { error } = await supabase.auth.updateUser(updates);
+    if (error) {
+      setSettingsMsg(`Error: ${error.message}`);
+    } else {
+      setSettingsMsg('Profile updated successfully!');
+      setTimeout(() => setSettingsMsg(''), 3000);
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 6) {
+      alert('Password must be at least 6 characters long.');
+      return;
+    }
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      alert(`Error updating password: ${error.message}`);
+    } else {
+      alert('Password updated successfully!');
+      setNewPassword('');
+    }
+  };
+
+  // CRUD OPERATIONS
   const handleCreateMachine = async (e) => {
     e.preventDefault();
-    const payload = {
-      ...formData,
-      machine_code: formData.id
-    };
+    const payload = { ...formData, machine_code: formData.id };
 
     const { error } = await supabase.from('machines').insert([payload]);
     if (error) {
@@ -164,7 +270,7 @@ export default function App() {
   };
 
   const handleDeleteMachine = async (machineId) => {
-    if (window.confirm(`Delete machine ${machineId} from Company System?`)) {
+    if (window.confirm(`Delete machine ${machineId} from database?`)) {
       const { error } = await supabase.from('machines').delete().eq('id', machineId);
       if (error) {
         alert(`Error deleting machine: ${error.message}`);
@@ -174,10 +280,31 @@ export default function App() {
     }
   };
 
-  const handleSaveSettings = (e) => {
-    e.preventDefault();
-    setSettingsSavedMessage('Company settings saved successfully!');
-    setTimeout(() => setSettingsSavedMessage(''), 3000);
+  // TELEMETRY DIAGNOSTICS ENGINE
+  const analyzeTelemetry = () => {
+    const tempDiff = processTemp - airTemp;
+    const power = (torque * rotationalSpeed * 2 * Math.PI) / 60;
+    const overstrain = toolWear * torque;
+
+    let failures = [];
+    if (toolWear >= 200) failures.push('Tool Wear Failure (TWF)');
+    if (tempDiff < 8.6 && rotationalSpeed < 1380) failures.push('Heat Dissipation Failure (HDF)');
+    if (power < 3500 || power > 9000) failures.push('Power Failure (PWF)');
+    if (overstrain > 11000) failures.push('Overstrain Failure (OSF)');
+
+    const hasFailure = failures.length > 0;
+    const riskPercentage = hasFailure ? Math.min(98, 40 + failures.length * 20) : 12;
+
+    setTelemetryResult({
+      hasFailure,
+      riskPercentage,
+      failures: hasFailure ? failures : ['Operating Normally (No Failure Detected)'],
+      metrics: {
+        tempDiff: tempDiff.toFixed(2),
+        powerKw: (power / 1000).toFixed(2),
+        overstrainVal: overstrain.toFixed(0)
+      }
+    });
   };
 
   const getStatusColor = (status) => {
@@ -203,31 +330,34 @@ export default function App() {
     return matchesSearch && matchesStatus;
   });
 
-  // Derived user details & Role-Based Access Control (RBAC)
   const user = session?.user;
-  const userFullName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operator';
+  const userFullName = profileName || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operator';
   const userEmail = user?.email || 'N/A';
-  const userId = user?.id || 'N/A';
   const userRole = (user?.user_metadata?.role || 'OPERATOR').toUpperCase();
   const isAdmin = userRole === 'ADMIN';
-  const userCreatedAt = user?.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A';
-  const userLastSignIn = user?.last_sign_in_at ? new Date(user.last_sign_in_at).toLocaleString() : 'N/A';
 
+  // LOGIN SCREEN
   if (!session) {
     return (
       <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#0b0f19', color: '#f8fafc', alignItems: 'center', justifyContent: 'center', fontFamily: 'Segoe UI, sans-serif' }}>
-        <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', borderRadius: '12px', padding: '2.5rem', width: '100%', maxWidth: '400px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+        <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', borderRadius: '12px', padding: '2.5rem', width: '100%', maxWidth: '420px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
           <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
             <div style={{ display: 'inline-flex', padding: '12px', backgroundColor: '#1e293b', borderRadius: '50%', marginBottom: '0.8rem' }}>
               <Cpu color="#38bdf8" size={32} />
             </div>
             <h2 style={{ margin: 0, fontSize: '1.4rem' }}>{isSignUp ? 'Create Company Account' : 'Company Portal Sign In'}</h2>
-            <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '4px' }}>Industrial Profiler Enterprise Management</p>
+            <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '4px' }}>Industrial Profiler Enterprise System</p>
           </div>
 
           {authError && (
-            <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#ef4444', padding: '0.6rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>
+            <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#ef4444', padding: '0.6rem 0.8rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>
               {authError}
+            </div>
+          )}
+
+          {authMsg && (
+            <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', color: '#10b981', padding: '0.6rem 0.8rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>
+              {authMsg}
             </div>
           )}
 
@@ -259,13 +389,13 @@ export default function App() {
             </div>
 
             <button type="submit" style={submitBtnStyle}>
-              {isSignUp ? 'Sign Up' : 'Sign In'}
+              {isSignUp ? 'Sign Up Account' : 'Sign In'}
             </button>
           </form>
 
           <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#64748b', marginTop: '1.2rem' }}>
             {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
-            <span style={{ color: '#38bdf8', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }}>
+            <span style={{ color: '#38bdf8', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); setAuthMsg(''); }}>
               {isSignUp ? 'Sign In' : 'Sign Up'}
             </span>
           </p>
@@ -276,7 +406,10 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#0b0f19', color: '#f8fafc', fontFamily: 'Segoe UI, sans-serif' }}>
-      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        table th, table td { vertical-align: middle; }
+      `}</style>
       
       {/* SIDEBAR */}
       <aside style={{ width: '250px', backgroundColor: '#131b2e', borderRight: '1px solid #1e293b', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '1.2rem 1rem' }}>
@@ -285,7 +418,7 @@ export default function App() {
             <Cpu color="#38bdf8" size={28} />
             <div>
               <h2 style={{ fontSize: '1.1rem', margin: 0, fontWeight: '700' }}>Industrial Profiler</h2>
-              <span style={{ fontSize: '0.7rem', color: '#10b981' }}>● Company Server Connected</span>
+              <span style={{ fontSize: '0.7rem', color: '#10b981' }}>● Server Connected</span>
             </div>
           </div>
 
@@ -293,6 +426,7 @@ export default function App() {
             {[
               { id: 'Dashboard', icon: LayoutDashboard },
               { id: 'Machines', icon: Server },
+              { id: 'Telemetry', icon: Gauge },
               { id: 'Analytics', icon: BarChart3 },
               { id: 'Settings', icon: Settings }
             ].map((item) => {
@@ -314,10 +448,9 @@ export default function App() {
           </nav>
         </div>
 
-        {/* SIDEBAR USER MINI-PROFILE WITH ROLE BADGE */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#0f172a', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid #1e293b' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: isAdmin ? '#ef4444' : '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.85rem' }}>
+            <div style={{ width: '34px', height: '34px', borderRadius: '50%', backgroundColor: isAdmin ? '#ef4444' : '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.85rem', flexShrink: 0 }}>
               {userFullName.charAt(0).toUpperCase()}
             </div>
             <div style={{ overflow: 'hidden' }}>
@@ -350,15 +483,15 @@ export default function App() {
         {activeTab === 'Dashboard' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
-              <Card title="Total DB Machines" value={machines.length} sub="Saved in Company Database" color="#3b82f6" />
+              <Card title="Total DB Machines" value={machines.length} sub="Saved in Database" color="#3b82f6" />
               <Card title="Healthy" value={machines.filter(m => (m.status || '').toUpperCase() === 'HEALTHY').length} sub="Operating normally" color="#10b981" />
               <Card title="Warning" value={machines.filter(m => (m.status || '').toUpperCase() === 'WARNING').length} sub="Requires inspection" color="#f59e0b" />
               <Card title="Critical" value={machines.filter(m => (m.status || '').toUpperCase() === 'CRITICAL').length} sub="Urgent action needed" color="#ef4444" />
             </div>
 
             <div style={{ backgroundColor: '#131b2e', padding: '1.2rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
-              <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>Fleet Overview Trend</h3>
-              <ResponsiveContainer width="100%" height={240}>
+              <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>Fleet Health Trends</h3>
+              <ResponsiveContainer width="100%" height={260}>
                 <LineChart data={fleetTrendData}>
                   <XAxis dataKey="date" stroke="#64748b" />
                   <YAxis stroke="#64748b" />
@@ -373,17 +506,17 @@ export default function App() {
           </div>
         )}
 
-        {/* MACHINES TAB */}
+        {/* MACHINES TAB (FIXED TABLE & ACTION LAYOUT) */}
         {activeTab === 'Machines' && (
           <div style={{ backgroundColor: '#131b2e', padding: '1.5rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '10px' }}>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <div style={inputContainerStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <div style={{ ...inputContainerStyle, width: '280px' }}>
                   <Search size={16} color="#64748b" />
-                  <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Search database records..." style={rawInputStyle} />
+                  <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Search code, name, location..." style={rawInputStyle} />
                 </div>
 
-                <div style={{ ...inputContainerStyle, padding: '0.4rem 0.8rem' }}>
+                <div style={{ ...inputContainerStyle, padding: '0.45rem 0.8rem' }}>
                   <Filter size={16} color="#64748b" />
                   <select
                     value={statusFilter}
@@ -398,315 +531,366 @@ export default function App() {
                 </div>
               </div>
 
-              {/* RBAC RESTRICTION: Only ADMINs see the Add Machine button */}
               {isAdmin && (
                 <button
                   onClick={() => {
                     setFormData({ id: `CNC-0${machines.length + 1}`, name: '', type: 'Class M', location: 'Plant A', status: 'HEALTHY', health_score: 95 });
                     setIsAddModalOpen(true);
                   }}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#10b981', color: '#fff', padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: '#10b981', color: '#fff', padding: '0.6rem 1rem', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.85rem' }}>
                   <Plus size={16} /> Add Machine
                 </button>
               )}
             </div>
 
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #1e293b', color: '#64748b', textAlign: 'left' }}>
-                  <th style={{ padding: '0.8rem' }}>Machine ID</th>
-                  <th style={{ padding: '0.8rem' }}>Name</th>
-                  <th style={{ padding: '0.8rem' }}>Variant</th>
-                  <th style={{ padding: '0.8rem' }}>Location</th>
-                  <th style={{ padding: '0.8rem' }}>Status</th>
-                  <th style={{ padding: '0.8rem' }}>Health Score</th>
-                  <th style={{ padding: '0.8rem' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredMachines.length > 0 ? (
-                  filteredMachines.map((m) => (
-                    <tr key={m.id} style={{ borderBottom: '1px solid #1a233a' }}>
-                      <td style={{ padding: '0.8rem', fontWeight: 'bold', color: '#38bdf8' }}>{m.id}</td>
-                      <td style={{ padding: '0.8rem' }}>{m.name}</td>
-                      <td style={{ padding: '0.8rem' }}>{m.type || 'Class M'}</td>
-                      <td style={{ padding: '0.8rem' }}>{m.location || 'N/A'}</td>
-                      <td style={{ padding: '0.8rem', fontWeight: 'bold', color: getStatusColor(m.status) }}>{m.status ? m.status.toUpperCase() : 'HEALTHY'}</td>
-                      <td style={{ padding: '0.8rem', fontWeight: 'bold' }}>{m.health_score ?? 100}%</td>
-                      <td style={{ padding: '0.8rem' }}>
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                          <button onClick={() => { setSelectedMachine(m); setIsViewModalOpen(true); }} style={iconBtnStyle}><Eye size={16} color="#38bdf8" /></button>
-                          
-                          {/* RBAC RESTRICTION: Only ADMINs see Edit & Delete */}
-                          {isAdmin && (
-                            <>
-                              <button onClick={() => { setSelectedMachine(m); setFormData({ ...m }); setIsEditModalOpen(true); }} style={iconBtnStyle}><Edit size={16} color="#f59e0b" /></button>
-                              <button onClick={() => handleDeleteMachine(m.id)} style={iconBtnStyle}><Trash2 size={16} color="#ef4444" /></button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={7} style={{ padding: '1.5rem', textAlign: 'center', color: '#64748b' }}>
-                      No machines match the selected status or search filter.
-                    </td>
+            <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #1e293b' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.875rem', tableLayout: 'fixed' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#0f172a', borderBottom: '1px solid #1e293b', color: '#94a3b8' }}>
+                    <th style={{ padding: '0.85rem 1rem', width: '120px' }}>Code / ID</th>
+                    <th style={{ padding: '0.85rem 1rem', width: '220px' }}>Machine Name</th>
+                    <th style={{ padding: '0.85rem 1rem', width: '90px' }}>Class</th>
+                    <th style={{ padding: '0.85rem 1rem', width: '110px' }}>Location</th>
+                    <th style={{ padding: '0.85rem 1rem', width: '90px' }}>Health</th>
+                    <th style={{ padding: '0.85rem 1rem', width: '120px' }}>Status</th>
+                    <th style={{ padding: '0.85rem 1rem', textAlign: 'right', width: '120px' }}>Actions</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredMachines.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>No machines found in database records.</td>
+                    </tr>
+                  ) : (
+                    filteredMachines.map((m) => (
+                      <tr key={m.id} style={{ borderBottom: '1px solid #1e293b', backgroundColor: '#131b2e' }}>
+                        <td style={{ padding: '0.85rem 1rem', fontWeight: 'bold', color: '#38bdf8', whiteSpace: 'nowrap' }}>{m.id}</td>
+                        <td style={{ padding: '0.85rem 1rem', fontWeight: '500', color: '#f8fafc' }}>{m.name}</td>
+                        <td style={{ padding: '0.85rem 1rem', color: '#94a3b8' }}>{m.type}</td>
+                        <td style={{ padding: '0.85rem 1rem', color: '#94a3b8' }}>{m.location}</td>
+                        <td style={{ padding: '0.85rem 1rem', fontWeight: 'bold' }}>{m.health_score}%</td>
+                        <td style={{ padding: '0.85rem 1rem' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: `${getStatusColor(m.status)}18`, color: getStatusColor(m.status), padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: getStatusColor(m.status) }}></span>
+                            {m.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', justifyContent: 'flex-end' }}>
+                            <button title="View Machine" onClick={() => { setSelectedMachine(m); setIsViewModalOpen(true); }} style={{ background: 'none', border: 'none', color: '#38bdf8', cursor: 'pointer', padding: '4px' }}>
+                              <Eye size={17} />
+                            </button>
+                            {isAdmin && (
+                              <>
+                                <button title="Edit Machine" onClick={() => { setFormData(m); setIsEditModalOpen(true); }} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: 'pointer', padding: '4px' }}>
+                                  <Edit size={17} />
+                                </button>
+                                <button title="Delete Machine" onClick={() => handleDeleteMachine(m.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}>
+                                  <Trash2 size={17} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* TELEMETRY PROFILER TAB */}
+        {activeTab === 'Telemetry' && (
+          <div style={{ backgroundColor: '#131b2e', padding: '1.5rem', borderRadius: '10px', border: '1px solid #1e293b', maxWidth: '800px' }}>
+            <h2 style={{ marginTop: 0, fontSize: '1.25rem', color: '#38bdf8' }}>Live Sensor Diagnostics Engine</h2>
+            <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+              Input physical telemetry sensor values to compute real-time structural strain and failure likelihood.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+              <div>
+                <label style={labelStyle}>Product Variant Type</label>
+                <select value={productType} onChange={(e) => setProductType(e.target.value)} style={{ ...rawInputStyle, backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '0.6rem' }}>
+                  <option value="L">L (Low Quality Class)</option>
+                  <option value="M">M (Medium Quality Class)</option>
+                  <option value="H">H (High Quality Class)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Rotational Speed [RPM]</label>
+                <div style={inputContainerStyle}>
+                  <Gauge size={16} color="#64748b" />
+                  <input type="number" value={rotationalSpeed} onChange={(e) => setRotationalSpeed(Number(e.target.value))} style={rawInputStyle} />
+                </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Air Temperature [K]</label>
+                <div style={inputContainerStyle}>
+                  <Thermometer size={16} color="#64748b" />
+                  <input type="number" step="0.1" value={airTemp} onChange={(e) => setAirTemp(Number(e.target.value))} style={rawInputStyle} />
+                </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Process Temperature [K]</label>
+                <div style={inputContainerStyle}>
+                  <Thermometer size={16} color="#38bdf8" />
+                  <input type="number" step="0.1" value={processTemp} onChange={(e) => setProcessTemp(Number(e.target.value))} style={rawInputStyle} />
+                </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Torque [Nm]</label>
+                <div style={inputContainerStyle}>
+                  <Zap size={16} color="#64748b" />
+                  <input type="number" step="0.1" value={torque} onChange={(e) => setTorque(Number(e.target.value))} style={rawInputStyle} />
+                </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Tool Wear [min]</label>
+                <div style={inputContainerStyle}>
+                  <Clock size={16} color="#64748b" />
+                  <input type="number" value={toolWear} onChange={(e) => setToolWear(Number(e.target.value))} style={rawInputStyle} />
+                </div>
+              </div>
+            </div>
+
+            <button onClick={analyzeTelemetry} style={submitBtnStyle}>
+              <Activity size={18} /> Run Telemetry Diagnostic
+            </button>
+
+            {telemetryResult && (
+              <div style={{ marginTop: '20px', padding: '16px', borderRadius: '8px', border: telemetryResult.hasFailure ? '1px solid #ef4444' : '1px solid #10b981', backgroundColor: telemetryResult.hasFailure ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  {telemetryResult.hasFailure ? <AlertTriangle color="#ef4444" /> : <CheckCircle2 color="#10b981" />}
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', color: telemetryResult.hasFailure ? '#ef4444' : '#10b981' }}>
+                    {telemetryResult.hasFailure ? 'Failure Risk Detected' : 'Optimal Machine Operation'}
+                  </h3>
+                </div>
+                <p style={{ margin: '4px 0', fontSize: '0.9rem' }}><strong>Failure Risk Score:</strong> {telemetryResult.riskPercentage}%</p>
+                <div style={{ margin: '8px 0', fontSize: '0.9rem' }}>
+                  <strong>Diagnostics Output:</strong>
+                  <ul style={{ margin: '4px 0 0 0', paddingLeft: '20px' }}>
+                    {telemetryResult.failures.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                </div>
+                <div style={{ marginTop: '12px', fontSize: '0.8rem', color: '#94a3b8', borderTop: '1px solid #1e293b', paddingTop: '8px' }}>
+                  Temp Difference: {telemetryResult.metrics.tempDiff} K | Power Output: {telemetryResult.metrics.powerKw} kW | Overstrain Index: {telemetryResult.metrics.overstrainVal}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* ANALYTICS TAB */}
         {activeTab === 'Analytics' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-            <div style={{ backgroundColor: '#131b2e', padding: '1.2rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
-              <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>Machine Distribution by Location</h3>
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={[
-                  { location: 'Plant A', count: machines.filter(m => m.location === 'Plant A').length || 1 },
-                  { location: 'Plant B', count: machines.filter(m => m.location === 'Plant B').length || 1 },
-                  { location: 'Plant C', count: machines.filter(m => m.location === 'Plant C').length || 1 }
-                ]}>
-                  <XAxis dataKey="location" stroke="#64748b" />
-                  <YAxis stroke="#64748b" />
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                  <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div style={{ backgroundColor: '#131b2e', padding: '1.2rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
-              <h3 style={{ margin: '0 0 1rem 0', fontSize: '1rem' }}>Status Breakdown</h3>
-              <ResponsiveContainer width="100%" height={260}>
-                <PieChart>
-                  <Pie
-                    data={[
-                      { name: 'Healthy', value: machines.filter(m => (m.status || '').toUpperCase() === 'HEALTHY').length || 1, color: '#10b981' },
-                      { name: 'Warning', value: machines.filter(m => (m.status || '').toUpperCase() === 'WARNING').length || 0, color: '#f59e0b' },
-                      { name: 'Critical', value: machines.filter(m => (m.status || '').toUpperCase() === 'CRITICAL').length || 0, color: '#ef4444' }
-                    ]}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%" cy="50%" outerRadius={80} label
-                  >
-                    <Cell fill="#10b981" />
-                    <Cell fill="#f59e0b" />
-                    <Cell fill="#ef4444" />
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+          <div style={{ backgroundColor: '#131b2e', padding: '1.5rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
+            <h3 style={{ margin: '0 0 1rem 0' }}>Machine Class Distribution</h3>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={[
+                { name: 'Class M', count: machines.filter(m => m.type === 'Class M').length || 3 },
+                { name: 'Class L', count: machines.filter(m => m.type === 'Class L').length || 2 },
+                { name: 'Class H', count: machines.filter(m => m.type === 'Class H').length || 1 }
+              ]}>
+                <XAxis dataKey="name" stroke="#64748b" />
+                <YAxis stroke="#64748b" />
+                <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155' }} />
+                <Bar dataKey="count" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         )}
 
-        {/* SETTINGS TAB */}
+        {/* SETTINGS TAB (REDESIGNED & FUNCTIONAL) */}
         {activeTab === 'Settings' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '850px' }}>
-            {settingsSavedMessage && (
-              <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.2)', border: '1px solid #10b981', color: '#10b981', padding: '0.8rem 1rem', borderRadius: '8px', fontSize: '0.9rem' }}>
-                {settingsSavedMessage}
-              </div>
-            )}
-
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', maxWidth: '1000px' }}>
+            
+            {/* USER PROFILE & SECURITY CARD */}
             <div style={{ backgroundColor: '#131b2e', padding: '1.5rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
-              <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.1rem', borderBottom: '1px solid #1e293b', paddingBottom: '0.6rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <User size={18} color="#38bdf8" /> User Account & Profile Details
-              </h3>
-              
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-                <UserDetailItem icon={User} label="Full Name" value={userFullName} />
-                <UserDetailItem icon={Mail} label="Email Address" value={userEmail} />
-                <UserDetailItem icon={Key} label="User ID (UUID)" value={userId} />
-                <UserDetailItem icon={Shield} label="Auth Role" value={userRole} highlight={isAdmin ? '#ef4444' : '#10b981'} />
-                <UserDetailItem icon={Calendar} label="Account Created" value={userCreatedAt} />
-                <UserDetailItem icon={Clock} label="Last Sign-In Time" value={userLastSignIn} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.2rem', paddingBottom: '0.8rem', borderBottom: '1px solid #1e293b' }}>
+                <Shield color="#38bdf8" size={20} />
+                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>User Account & Security</h3>
+              </div>
+
+              {settingsMsg && (
+                <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', color: '#10b981', padding: '0.6rem', borderRadius: '6px', fontSize: '0.8rem', marginBottom: '1rem' }}>
+                  {settingsMsg}
+                </div>
+              )}
+
+              <form onSubmit={handleUpdateProfile} style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div>
+                  <label style={labelStyle}>Full Display Name</label>
+                  <div style={inputContainerStyle}>
+                    <User size={16} color="#64748b" />
+                    <input value={profileName} onChange={(e) => setProfileName(e.target.value)} style={rawInputStyle} placeholder="Enter your full name" />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Registered Email</label>
+                  <div style={{ ...inputContainerStyle, opacity: 0.7 }}>
+                    <Mail size={16} color="#64748b" />
+                    <input value={userEmail} disabled style={{ ...rawInputStyle, cursor: 'not-allowed' }} />
+                  </div>
+                </div>
+
+                <button type="submit" style={{ ...submitBtnStyle, backgroundColor: '#2563eb' }}>
+                  <Save size={16} /> Save Profile Name
+                </button>
+              </form>
+
+              <div style={{ paddingTop: '1rem', borderTop: '1px solid #1e293b' }}>
+                <h4 style={{ margin: '0 0 0.8rem 0', fontSize: '0.9rem', color: '#f8fafc' }}>Change Password</h4>
+                <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div>
+                    <label style={labelStyle}>New Security Password</label>
+                    <div style={inputContainerStyle}>
+                      <Key size={16} color="#64748b" />
+                      <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Minimum 6 characters" style={rawInputStyle} />
+                    </div>
+                  </div>
+                  <button type="submit" style={{ ...submitBtnStyle, backgroundColor: '#334155' }}>
+                    <Lock size={16} /> Update Password
+                  </button>
+                </form>
               </div>
             </div>
 
-            <form onSubmit={handleSaveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              <div style={{ backgroundColor: '#131b2e', padding: '1.5rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
-                <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.1rem', borderBottom: '1px solid #1e293b', paddingBottom: '0.6rem' }}>Company Details</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <Input
-                    label="Company Name"
-                    value={companySettings.companyName}
-                    onChange={(e) => setCompanySettings({ ...companySettings, companyName: e.target.value })}
-                  />
-                  <Input
-                    label="Primary Facility / Plant Location"
-                    value={companySettings.facilityLocation}
-                    onChange={(e) => setCompanySettings({ ...companySettings, facilityLocation: e.target.value })}
-                  />
-                </div>
+            {/* FACILITY & PREFERENCES CARD */}
+            <div style={{ backgroundColor: '#131b2e', padding: '1.5rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '1.2rem', paddingBottom: '0.8rem', borderBottom: '1px solid #1e293b' }}>
+                <Settings color="#38bdf8" size={20} />
+                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Facility & System Preferences</h3>
               </div>
 
-              <div style={{ backgroundColor: '#131b2e', padding: '1.5rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
-                <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.1rem', borderBottom: '1px solid #1e293b', paddingBottom: '0.6rem' }}>System Preferences</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <form onSubmit={(e) => { e.preventDefault(); setSettingsMsg('Facility settings saved successfully!'); setTimeout(() => setSettingsMsg(''), 3000); }} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div>
+                  <label style={labelStyle}>Company Name</label>
+                  <div style={inputContainerStyle}>
+                    <input value={companySettings.companyName} onChange={(e) => setCompanySettings({ ...companySettings, companyName: e.target.value })} style={rawInputStyle} />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Facility Location</label>
+                  <div style={inputContainerStyle}>
+                    <input value={companySettings.facilityLocation} onChange={(e) => setCompanySettings({ ...companySettings, facilityLocation: e.target.value })} style={rawInputStyle} />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Auto Database Sync Interval</label>
+                  <select
+                    value={companySettings.autoSyncInterval}
+                    onChange={(e) => setCompanySettings({ ...companySettings, autoSyncInterval: e.target.value })}
+                    style={{ ...rawInputStyle, backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '0.6rem' }}
+                  >
+                    <option value="15s">Every 15 Seconds</option>
+                    <option value="30s">Every 30 Seconds</option>
+                    <option value="60s">Every 60 Seconds</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.8rem', backgroundColor: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
                   <div>
-                    <label style={labelStyle}>Auto-Sync Interval</label>
-                    <select
-                      value={companySettings.autoSyncInterval}
-                      onChange={(e) => setCompanySettings({ ...companySettings, autoSyncInterval: e.target.value })}
-                      style={inputStyle}>
-                      <option value="15s">Every 15 Seconds</option>
-                      <option value="30s">Every 30 Seconds</option>
-                      <option value="1m">Every 1 Minute</option>
-                      <option value="5m">Every 5 Minutes</option>
-                    </select>
+                    <div style={{ fontSize: '0.85rem', fontWeight: '600' }}>Critical Failure Alerts</div>
+                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Notify team on high-risk telemetry</div>
                   </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '0.5rem' }}>
-                    <div>
-                      <div style={{ fontWeight: '600', fontSize: '0.9rem' }}>Email Notifications</div>
-                      <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Receive automated daily telemetry summaries</div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={companySettings.emailAlerts}
-                      onChange={(e) => setCompanySettings({ ...companySettings, emailAlerts: e.target.checked })}
-                      style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div>
-                      <div style={{ fontWeight: '600', fontSize: '0.9rem' }}>Critical System Alerts</div>
-                      <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Send immediate alerts when machine status drops to Critical</div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={companySettings.criticalNotifications}
-                      onChange={(e) => setCompanySettings({ ...companySettings, criticalNotifications: e.target.checked })}
-                      style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                    />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCompanySettings({ ...companySettings, criticalNotifications: !companySettings.criticalNotifications })}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: companySettings.criticalNotifications ? '#10b981' : '#64748b' }}
+                  >
+                    {companySettings.criticalNotifications ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+                  </button>
                 </div>
-              </div>
 
-              <button type="submit" style={{ ...submitBtnStyle, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', alignSelf: 'flex-start', padding: '0.75rem 2rem' }}>
-                <Save size={18} /> Save Settings
-              </button>
-            </form>
+                <button type="submit" style={{ ...submitBtnStyle, backgroundColor: '#2563eb', marginTop: '0.5rem' }}>
+                  <Save size={16} /> Save Facility Preferences
+                </button>
+              </form>
+            </div>
+
           </div>
         )}
-
       </main>
 
-      {/* --- ADD MODAL --- */}
-      {isAddModalOpen && (
-        <Modal title="Insert Record into Company System" onClose={() => setIsAddModalOpen(false)}>
-          <form onSubmit={handleCreateMachine} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <Input label="Machine ID" value={formData.id} onChange={(e) => setFormData({ ...formData, id: e.target.value })} required />
-            <Input label="Machine Name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required />
-            <Input label="Location" value={formData.location} onChange={(e) => setFormData({ ...formData, location: e.target.value })} />
-            <div>
-              <label style={labelStyle}>Status</label>
-              <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })} style={inputStyle}>
-                <option value="HEALTHY">HEALTHY</option>
-                <option value="WARNING">WARNING</option>
-                <option value="CRITICAL">CRITICAL</option>
-              </select>
-            </div>
-            <Input label="Health Score (%)" type="number" value={formData.health_score} onChange={(e) => setFormData({ ...formData, health_score: Number(e.target.value) })} />
-            <button type="submit" style={submitBtnStyle}>Save to Database</button>
-          </form>
-        </Modal>
-      )}
-
-      {/* --- EDIT MODAL --- */}
-      {isEditModalOpen && (
-        <Modal title={`Update Machine: ${formData.id}`} onClose={() => setIsEditModalOpen(false)}>
-          <form onSubmit={handleUpdateMachine} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <Input label="Machine Name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required />
-            <Input label="Location" value={formData.location} onChange={(e) => setFormData({ ...formData, location: e.target.value })} />
-            <div>
-              <label style={labelStyle}>Status</label>
-              <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })} style={inputStyle}>
-                <option value="HEALTHY">HEALTHY</option>
-                <option value="WARNING">WARNING</option>
-                <option value="CRITICAL">CRITICAL</option>
-              </select>
-            </div>
-            <Input label="Health Score (%)" type="number" value={formData.health_score} onChange={(e) => setFormData({ ...formData, health_score: Number(e.target.value) })} />
-            <button type="submit" style={submitBtnStyle}>Update Database Record</button>
-          </form>
-        </Modal>
-      )}
-
-      {/* --- VIEW MODAL --- */}
+      {/* VIEW MACHINE MODAL */}
       {isViewModalOpen && selectedMachine && (
-        <Modal title={`Machine Details - ${selectedMachine.id}`} onClose={() => setIsViewModalOpen(false)}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', fontSize: '0.9rem' }}>
-            <div><strong>ID:</strong> {selectedMachine.id}</div>
-            <div><strong>Name:</strong> {selectedMachine.name}</div>
-            <div><strong>Variant:</strong> {selectedMachine.type || 'Class M'}</div>
-            <div><strong>Location:</strong> {selectedMachine.location || 'N/A'}</div>
-            <div><strong>Status:</strong> <span style={{ color: getStatusColor(selectedMachine.status), fontWeight: 'bold' }}>{selectedMachine.status}</span></div>
-            <div><strong>Health Score:</strong> {selectedMachine.health_score}%</div>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '1.8rem', borderRadius: '10px', width: '420px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #1e293b', paddingBottom: '0.8rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#38bdf8' }}>Machine Details [{selectedMachine.id}]</h3>
+              <button onClick={() => setIsViewModalOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', fontSize: '0.9rem' }}>
+              <div><strong>Name:</strong> {selectedMachine.name}</div>
+              <div><strong>Class:</strong> {selectedMachine.type}</div>
+              <div><strong>Location:</strong> {selectedMachine.location}</div>
+              <div><strong>Health Score:</strong> {selectedMachine.health_score}%</div>
+              <div>
+                <strong>Status: </strong>
+                <span style={{ color: getStatusColor(selectedMachine.status), fontWeight: 'bold' }}>{selectedMachine.status}</span>
+              </div>
+            </div>
+            <button onClick={() => setIsViewModalOpen(false)} style={{ ...submitBtnStyle, width: '100%', marginTop: '1.2rem', backgroundColor: '#334155' }}>Close</button>
           </div>
-        </Modal>
+        </div>
       )}
 
-    </div>
-  );
-}
+      {/* ADD / EDIT MACHINE MODAL */}
+      {(isAddModalOpen || isEditModalOpen) && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '1.8rem', borderRadius: '10px', width: '420px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid #1e293b', paddingBottom: '0.8rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{isAddModalOpen ? 'Add New Machine' : 'Edit Machine Details'}</h3>
+              <button onClick={() => { setIsAddModalOpen(false); setIsEditModalOpen(false); }} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}><X size={18} /></button>
+            </div>
+            <form onSubmit={isAddModalOpen ? handleCreateMachine : handleUpdateMachine} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label style={labelStyle}>Machine Code / ID</label>
+                <div style={inputContainerStyle}>
+                  <input placeholder="e.g. CNC-01" disabled={isEditModalOpen} value={formData.id} onChange={(e) => setFormData({ ...formData, id: e.target.value })} required style={{ ...rawInputStyle, opacity: isEditModalOpen ? 0.6 : 1 }} />
+                </div>
+              </div>
 
-// Helpers
-function UserDetailItem({ icon: Icon, label, value, highlight }) {
-  return (
-    <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px', padding: '0.8rem 1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
-      <Icon size={20} color={highlight || "#64748b"} />
-      <div style={{ overflow: 'hidden' }}>
-        <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '500' }}>{label}</div>
-        <div style={{ fontSize: '0.85rem', color: highlight || '#f8fafc', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
-      </div>
-    </div>
-  );
-}
+              <div>
+                <label style={labelStyle}>Machine Name</label>
+                <div style={inputContainerStyle}>
+                  <input placeholder="Machine description" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required style={rawInputStyle} />
+                </div>
+              </div>
 
-function Card({ title, value, sub, color }) {
-  return (
-    <div style={{ backgroundColor: '#131b2e', padding: '1.2rem', borderRadius: '10px', border: '1px solid #1e293b' }}>
-      <span style={{ color: '#64748b', fontSize: '0.85rem' }}>{title}</span>
-      <div style={{ fontSize: '1.8rem', fontWeight: '700', margin: '0.4rem 0', color }}>{value}</div>
-      <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{sub}</span>
-    </div>
-  );
-}
+              <div>
+                <label style={labelStyle}>Location</label>
+                <div style={inputContainerStyle}>
+                  <input placeholder="e.g. Plant A" value={formData.location} onChange={(e) => setFormData({ ...formData, location: e.target.value })} required style={rawInputStyle} />
+                </div>
+              </div>
 
-function Modal({ title, children, onClose }) {
-  return (
-    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-      <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', borderRadius: '10px', padding: '1.5rem', width: '100%', maxWidth: '450px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{title}</h3>
-          <button onClick={onClose} style={iconBtnStyle}><X size={18} color="#64748b" /></button>
+              <div>
+                <label style={labelStyle}>Status</label>
+                <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })} style={{ ...rawInputStyle, backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '0.6rem' }}>
+                  <option value="HEALTHY">HEALTHY</option>
+                  <option value="WARNING">WARNING</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                <button type="button" onClick={() => { setIsAddModalOpen(false); setIsEditModalOpen(false); }} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.9rem' }}>Cancel</button>
+                <button type="submit" style={submitBtnStyle}>Save Machine</button>
+              </div>
+            </form>
+          </div>
         </div>
-        {children}
-      </div>
+      )}
     </div>
   );
 }
-
-function Input({ label, ...props }) {
-  return (
-    <div>
-      <label style={labelStyle}>{label}</label>
-      <input style={inputStyle} {...props} />
-    </div>
-  );
-}
-
-const labelStyle = { fontSize: '0.8rem', color: '#94a3b8', display: 'block', marginBottom: '4px' };
-const inputStyle = { width: '100%', backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '6px', padding: '0.6rem', color: '#fff', outline: 'none', fontSize: '0.85rem' };
-const inputContainerStyle = { display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px', padding: '0.6rem 1rem' };
-const rawInputStyle = { background: 'none', border: 'none', color: '#fff', outline: 'none', width: '100%', fontSize: '0.85rem' };
-const submitBtnStyle = { backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '0.75rem', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginTop: '0.5rem' };
-const iconBtnStyle = { background: 'none', border: 'none', cursor: 'pointer', padding: 0 };
